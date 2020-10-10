@@ -1,5 +1,5 @@
 //#include <M5StickC.h>
-#include "M5StickCPlus.h"
+#include <M5StickCPlus.h>
 #include <SPIFFS.h> 
 #include <LovyanGFX.hpp>
 #include <Preferences.h>
@@ -8,8 +8,8 @@
 Preferences preferences;
 Madgwick *filter = new Madgwick();
 
-static LGFX lcd;                 // LGFXのインスタンスを作成。
-static LGFX_Sprite sprite(&lcd); // スプライトを使う場合はLGFX_Spriteのインスタンスを作成。
+static LGFX lcd;
+static LGFX_Sprite sprite[2];
 
 //#pragma GCC optimize ("O3")
 struct point3df{ float x, y, z;};
@@ -66,29 +66,56 @@ float calb_gyroX = 0.0;
 float calb_gyroY = 0.0;
 float calb_gyroZ = 0.0;
 
+bool flip;
+uint32_t count = 0;
+uint32_t pre_time =0;
+
+int ws;
+int hs;
+
 void rotate_cube_xyz( float roll, float pitch, float yaw){
   uint8_t i;
 
   float DistanceCamera = 300;
   float DistanceScreen = 550;
 
-  for (i = 0; i < 8; i++){
-    
-    float x = (cos(yaw) * cos(pitch) ) * cubef[i].x
-            + (cos(yaw) * sin(pitch) * sin(roll) - sin(yaw) * cos(roll) ) * cubef[i].y
-            + (cos(yaw) * sin(pitch) * cos(roll) + sin(yaw) * sin(roll) ) * cubef[i].z;
-    float y = (sin(yaw) * cos(pitch)) * cubef[i].x
-            + (sin(yaw) * sin(pitch) * sin(roll) + cos(yaw) * cos(roll)) * cubef[i].y
-            + (sin(yaw) * sin(pitch) * cos(roll) - cos(yaw) * sin(roll)) * cubef[i].z;
-    float z = (-sin(pitch)) * cubef[i].x
-            + (cos(pitch) * sin(roll) ) * cubef[i].y
-            + (cos(pitch) * cos(roll) ) * cubef[i].z;
+  float cosyaw   = cos(yaw);
+  float sinyaw   = sin(yaw);
+  float cospitch = cos(pitch);
+  float sinpitch = sin(pitch);
+  float cosroll  = cos(roll);
+  float sinroll  = sin(roll);
 
-    float workx = (x * DistanceCamera) / (z + DistanceCamera + DistanceScreen);
-    float worky = (y * DistanceCamera) / (z + DistanceCamera + DistanceScreen);
-    
-    cubef2[i].x = workx + 80;
-    cubef2[i].y = worky + 40;
+  float sinyaw_sinroll = sinyaw * sinroll;
+  float sinyaw_cosroll = sinyaw * cosroll;
+  float cosyaw_sinroll = cosyaw * sinroll;
+  float cosyaw_cosroll = cosyaw * cosroll;
+
+  float x_x = cosyaw * cospitch;
+  float x_y = cosyaw_sinroll * sinpitch - sinyaw_cosroll;
+  float x_z = cosyaw_cosroll * sinpitch + sinyaw_sinroll;
+
+  float y_x = sinyaw * cospitch;
+  float y_y = sinyaw_sinroll * sinpitch + cosyaw_cosroll;
+  float y_z = sinyaw_cosroll * sinpitch - cosyaw_sinroll;
+
+  float z_x = -sinpitch;
+  float z_y = cospitch * sinroll;
+  float z_z = cospitch * cosroll;
+
+  for (i = 0; i < 8; i++){
+    float x = x_x * cubef[i].x
+            + x_y * cubef[i].y
+            + x_z * cubef[i].z;
+    float y = y_x * cubef[i].x
+            + y_y * cubef[i].y
+            + y_z * cubef[i].z;
+    float z = z_x * cubef[i].x
+            + z_y * cubef[i].y
+            + z_z * cubef[i].z;
+
+    cubef2[i].x = (x * DistanceCamera) / (z + DistanceCamera + DistanceScreen) + (ws>>1);
+    cubef2[i].y = (y * DistanceCamera) / (z + DistanceCamera + DistanceScreen) + (hs>>1);
     cubef2[i].z = z;
   }
 }
@@ -113,66 +140,65 @@ void setup(void){
   Serial.println(calb_gyroZ);
   preferences.end();
 
-// 最初に初期化関数を呼び出します。
   lcd.init();
 
-
-// 回転方向を 0～3 の4方向から設定します。(4～7を使用すると上下反転になります。)
   lcd.setRotation(1);
 
 
 // バックライトの輝度を 0～255 の範囲で設定します。
-  lcd.setBrightness(255); // の範囲で設定
+//  lcd.setBrightness(80);
 
+  lcd.setColorDepth(16);  // RGB565の16ビットに設定
 
-// 必要に応じてカラーモードを設定します。（初期値は16）
-// 16の方がSPI通信量が少なく高速に動作しますが、赤と青の諧調が5bitになります。
-// 24の方がSPI通信量が多くなりますが、諧調表現が綺麗になります。
-//lcd.setColorDepth(16);  // RGB565の16ビットに設定
-  lcd.setColorDepth(24);  // RGB888の24ビットに設定(表示される色数はパネル性能によりRGB666の18ビットになります)
+  lcd.fillScreen(0);
 
+  //ws = lcd.width();
+  //hs = lcd.height();
+  ws = 160;
+  hs = 80;
 
-// clearまたはfillScreenで画面全体を塗り潰します。
-// どちらも同じ動作をしますが、clearは引数を省略でき、その場合は黒で塗り潰します。
-  lcd.fillScreen(0);  // 黒で塗り潰し
-  lcd.clear(0xFFFF);  // 白で塗り潰し
-  lcd.clear();        // 黒で塗り潰し
+  sprite[0].createSprite(ws,hs);
+  sprite[1].createSprite(ws,hs);
+  lcd.startWrite();
+  lcd.fillScreen(TFT_LIGHTGREY);
 }
 
-unsigned int pre_time =0;
+float smoothMove(float dst, float src)
+{
+  if (     dst + M_PI < src) src -= M_PI * 2;
+  else if (src + M_PI < dst) src += M_PI * 2;
+  return (dst + src * 19.0) / 20.0;
+}
 
-void loop(void){
-  M5.update();
-
-  M5.IMU.getGyroData(&gyroX,&gyroY,&gyroZ);
-  M5.IMU.getAccelData(&accX,&accY,&accZ);
-
-  filter->MadgwickAHRSupdateIMU(
-    PI/180.0F*(gyroX - calb_gyroX), 
-    PI/180.0F*(gyroY - calb_gyroY), 
-    PI/180.0F*(gyroZ - calb_gyroZ),
-    accX - calb_accX, 
-    accY - calb_accY, 
-    accZ - calb_accZ
-    );
-
-  pitch = filter->getPitch()*180.0F/PI;
-  roll = filter->getRoll()*180.0F/PI;
-  yaw = filter->getYaw()*180.0F/PI;
-
-  //Serial.printf("%f,%f,%f,\r\n",pitch,roll,yaw);
-  
-  rotate_cube_xyz(filter->getRoll(),filter->getPitch(),filter->getYaw());
-  int ws = lcd.width();
-  int hs = lcd.height();
-  
-  sprite.createSprite(ws,hs);
-  //sprite.drawRect(0, 0, ws,hs, 0xF000);
-  for (int i = 0; i < 8; i++)
+void loop(void)
+{
+  count = (count + 1) & 3;
+  if (count == 0)
   {
-    sprite.drawRect( (int)cubef2[i].x-2, (int)cubef2[i].y-2, 4, 4 , 0xF000);
-    //Serial.printf("%d,%f,%f,\r\n",i,cubef2[i].x, cubef2[i].y); 
+    M5.update();
+    if(M5.BtnA.isPressed()){
+      Serial.println("Calibration Start");
+      getCalibrationVal();
+    }
+
+    M5.IMU.getGyroData(&gyroX,&gyroY,&gyroZ);
+    M5.IMU.getAccelData(&accX,&accY,&accZ);
+
+    filter->MadgwickAHRSupdateIMU(
+      PI/180.0F*(gyroX - calb_gyroX), 
+      PI/180.0F*(gyroY - calb_gyroY), 
+      PI/180.0F*(gyroZ - calb_gyroZ),
+      accX - calb_accX, 
+      accY - calb_accY, 
+      accZ - calb_accZ
+      );
   }
+
+  pitch = smoothMove(filter->getPitch(), pitch);
+  roll  = smoothMove(filter->getRoll() , roll );
+  yaw   = smoothMove(filter->getYaw()  , yaw  );
+
+  rotate_cube_xyz(roll, pitch, yaw);
 
   int ss[6]={0,1,2,3,4,5};
   float sf[6]={0};
@@ -201,41 +227,34 @@ void loop(void){
     }
   }
 
+  flip = !flip;
+  sprite[flip].clear();
+  for (int i = 0; i < 8; i++)
+  {
+    sprite[flip].drawRect( (int)cubef2[i].x-2, (int)cubef2[i].y-2, 4, 4 , 0xF000);
+    //Serial.printf("%d,%f,%f,\r\n",i,cubef2[i].x, cubef2[i].y); 
+  }
+
   for (int i = 0; i < 6; i++)
   {
     int ii = ss[i];
     
-    uint16_t color = lcd.color565((uint8_t)((( ii + 1) &  1)      * 255),
-                              (uint8_t)((((ii + 1) >> 1) & 1) * 255),
-                              (uint8_t)((((ii + 1) >> 2) & 1) * 255));
-    sprite.fillTriangle(    cubef2[s[ii].p[0]].x, cubef2[s[ii].p[0]].y,
+    sprite[flip].setColor( lcd.color565(((( ii + 1) &  1)      * 255),
+                                  ((((ii + 1) >> 1) & 1) * 255),
+                                  ((((ii + 1) >> 2) & 1) * 255)
+                   )             );
+    sprite[flip].fillTriangle(    cubef2[s[ii].p[0]].x, cubef2[s[ii].p[0]].y,
                             cubef2[s[ii].p[1]].x, cubef2[s[ii].p[1]].y,
-                            cubef2[s[ii].p[2]].x, cubef2[s[ii].p[2]].y,
-                            color);
-    sprite.fillTriangle(    cubef2[s[ii].p[2]].x, cubef2[s[ii].p[2]].y,
+                            cubef2[s[ii].p[2]].x, cubef2[s[ii].p[2]].y);
+    sprite[flip].fillTriangle(    cubef2[s[ii].p[2]].x, cubef2[s[ii].p[2]].y,
                             cubef2[s[ii].p[3]].x, cubef2[s[ii].p[3]].y,
-                            cubef2[s[ii].p[0]].x, cubef2[s[ii].p[0]].y,
-                            color);
+                            cubef2[s[ii].p[0]].x, cubef2[s[ii].p[0]].y);
   }
-  sprite.pushSprite(0, 0);
-
-  sprite.deleteSprite();
-
   int deftime = millis() - pre_time;
-  while(deftime < 10)
-  {
-    delay(1);
-    deftime = millis() - pre_time;
-  }
   pre_time = millis();
-  lcd.setCursor(0, 70);
-  lcd.printf("%5d",deftime);
-  
-  if(M5.BtnA.isPressed()){
-    Serial.println("Calibration Start");
-    getCalibrationVal();
-  }
-
+  sprite[flip].setCursor(0, 70);
+  sprite[flip].printf("%5d",deftime);
+  sprite[flip].pushSprite(&lcd, 0, 0);
 }
 
 void getCalibrationVal()
