@@ -67,8 +67,8 @@ float calb_gyroY = 0.0;
 float calb_gyroZ = 0.0;
 
 bool flip;
-uint32_t count = 0;
-uint32_t pre_time =0;
+uint32_t pre_calc_time = 0;
+uint32_t pre_show_time = 0;
 
 int ws;
 int hs;
@@ -160,7 +160,7 @@ void setup(void){
   sprite[0].createSprite(ws,hs);
   sprite[1].createSprite(ws,hs);
   lcd.startWrite();
-  lcd.fillScreen(TFT_LIGHTGREY);
+  lcd.fillScreen(TFT_DARKGREY);
 }
 
 float smoothMove(float dst, float src)
@@ -172,9 +172,12 @@ float smoothMove(float dst, float src)
 
 void loop(void)
 {
-  count = (count + 1) & 3;
-  if (count == 0)
-  {
+  int calc_time = millis() - pre_calc_time;
+  
+  //count = (count + 1) & 3;
+  //if (count == 0)
+  if (calc_time >= 9)
+  {  
     M5.update();
     if(M5.BtnA.isPressed()){
       Serial.println("Calibration Start");
@@ -192,6 +195,8 @@ void loop(void)
       accY - calb_accY, 
       accZ - calb_accZ
       );
+
+    pre_calc_time = millis();
   }
 
   pitch = smoothMove(filter->getPitch(), pitch);
@@ -200,6 +205,7 @@ void loop(void)
 
   rotate_cube_xyz(roll, pitch, yaw);
 
+  //描写する面の順番に並び替え
   int ss[6]={0,1,2,3,4,5};
   float sf[6]={0};
   for (int i = 0; i < 6; i++)
@@ -210,7 +216,7 @@ void loop(void)
     }
     sf[i] = wz;
   }
-
+  //交換ソート
   for (int j = 5; j > 0; j--){
     for (int i = 0; i < j; i++)
     {
@@ -250,10 +256,17 @@ void loop(void)
                             cubef2[s[ii].p[3]].x, cubef2[s[ii].p[3]].y,
                             cubef2[s[ii].p[0]].x, cubef2[s[ii].p[0]].y);
   }
-  int deftime = millis() - pre_time;
-  pre_time = millis();
-  sprite[flip].setCursor(0, 70);
-  sprite[flip].printf("%5d",deftime);
+  
+  int show_time = millis() - pre_show_time;
+  pre_show_time = millis();
+  sprite[flip].setCursor(0, 50);
+  sprite[flip].printf("%5d",show_time);
+
+  if (calc_time >= 9){
+    sprite[flip].setCursor(0, 60);
+    sprite[flip].printf("%5d",calc_time);
+  }
+  
   sprite[flip].pushSprite(&lcd, 0, 0);
 }
 
