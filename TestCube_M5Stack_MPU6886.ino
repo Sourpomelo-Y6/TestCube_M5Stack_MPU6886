@@ -1,3 +1,6 @@
+// define must ahead #include <M5Stack.h>
+//#define M5STACK_MPU6886 
+//#include <M5Stack.h>
 //#include <M5StickC.h>
 #include <M5StickCPlus.h>
 #include <SPIFFS.h> 
@@ -312,7 +315,7 @@ void getCalibrationVal()
     preferences.begin("imu_calb_data", false);
     preferences.putFloat("ax", calb_accX);
     preferences.putFloat("ay", calb_accY);
-    preferences.putFloat("az", calb_accX);
+    preferences.putFloat("az", calb_accZ);
     preferences.putFloat("gx", calb_gyroX);
     preferences.putFloat("gy", calb_gyroY);
     preferences.putFloat("gz", calb_gyroZ);

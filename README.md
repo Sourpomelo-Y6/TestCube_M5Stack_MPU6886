@@ -1,4 +1,4 @@
-# TestCube_M5StickCPlus
+# TestCube_MPU6886
 IMU-powered 3D Cube
 
 IMUで動かす3Dキューブ
